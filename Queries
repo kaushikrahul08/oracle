@@ -942,20 +942,11 @@ ALTER DATABASE RECOVER MANAGED STANDBY DATABASE USING CURRENT LOGFILE DISCONNECT
 
 JDBC Connection details:
 ------------------------
-jdbc:oracle:thin:@//ics106045239.ics-eu-1.asml.com:1521/WLD
-jdbc:oracle:thin:@//VIP000000159.ics-eu-1.asml.com:1521/ODSTFA
-jdbc:oracle:thin:@//VIP000000150.ics-eu-1.asml.com:1521/WIPLFA
-jdbc:oracle:thin:@//VIP000000150.ics-eu-1.asml.com:1521/ODSLFA
+jdbc:oracle:thin:@//ics106045239.ics-eu-1.test.com:1521/WLD
+jdbc:oracle:thin:@//VIP000000159.ics-eu-1.test.com:1521/ODSTFA
+jdbc:oracle:thin:@//VIP000000150.ics-eu-1.test.com:1521/WIPLFA
+jdbc:oracle:thin:@//VIP000000150.ics-eu-1.test.com:1521/ODSLFA
 
-jdbc:oracle:thin:@//nlsapdbbd301:1550/BD3
-ssh -N -L1550:nlsapdbbd301:1550 sys@BD3
-
-
-VIP000000169
-
-glassfish_own
-
-GLASSFISH_OWN
 
 
 select metadata.get_ddl('VIEW','SQLMVLI') from dual;
