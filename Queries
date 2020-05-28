@@ -1,0 +1,1352 @@
+Updated last :28-MAY-20
+
+##--Get usertables and object types
+
+select 'Table' Obj_Type, table_name, blocks/1024/1024 Blocks
+from user_tables
+where table_name like 'JCDS%'
+union
+select 'Index', index_name, leaf_blocks
+from user_indexes
+where index_name like 'JCDS%'
+order by 1dba
+/
+
+# Get Database growth
+
+select to_char(CREATION_TIME,'RRRR') year, to_char(CREATION_TIME,'MM') month, round(sum(bytes)/1024/1024/1024) GB
+from v$datafile
+group by to_char(CREATION_TIME,'RRRR'),to_char(CREATION_TIME,'MM')
+order by 1, 2;
+
+
+SELECT ds.tablespace_name
+, ds.segment_name "object name"db
+, dobj.object_type
+, ROUND(SUM(dhss.space_used_delta) / 1024 / 1024 / 1024,2) "Growth (GB)"
+FROM dba_hist_snapshot snpshot
+, dba_hist_seg_stat dhss
+, dba_objects dobj
+, dba_segments ds
+WHERE begin_interval_time > TRUNC(SYSDATE)-1
+AND snpshot.snap_id = dhss.snap_id
+AND dobj.object_id = dhss.obj#
+AND dobj.owner = ds.owner
+AND dobj.object_name = ds.segment_name
+AND ds.owner ='SAPPM8'
+GROUP BY ds.tablespace_name,ds.segment_name,dobj.object_type
+ORDER BY 3 ASC;
+
+SELECT * FROM
+(SELECT ds.tablespace_name
+, ds.segment_name
+, TO_DATE(TO_CHAR (snpshot.end_interval_time,'DD-MM-YYYY'),'DD-MM-YYYY') daywise
+, SUM(dhss.space_used_delta) / 1024 / 1024 "Space used (MB)"
+, AVG(ds.bytes) / 1024 / 1024 "Total Object Size (MB)"
+, ROUND(SUM(dhss.space_used_delta) / SUM(ds.bytes) * 100, 2) "Percent of Total Disk Usage"
+FROM dba_hist_snapshot snpshot
+, dba_hist_seg_stat dhss
+, dba_objects dobj
+, dba_segments ds
+WHERE begin_interval_time > TRUNC(SYSDATE) – &pastdays
+AND snpshot.snap_id = dhss.snap_id
+AND dobj.object_id = dhss.obj#
+AND dobj.owner = ds.owner
+AND dobj.object_name = ds.segment_name
+AND ds.segment_name = ‘TEST_TAB1′
+GROUP BY ds.tablespace_name,ds.segment_name,TO_DATE(TO_CHAR (snpshot.end_interval_time,’DD-MM-YYYY’),’DD-MM-YYYY’)
+ORDER BY ds.tablespace_name,ds.segment_name,TO_DATE(TO_CHAR (snpshot.end_interval_time,’DD-MM-YYYY’),’DD-MM-YYYY’));
+
+
+
+#-- Get PGA usages
+
+select CON_ID, sum(PGA_USED_MEM/1024/1024), sum(PGA_ALLOC_MEM/1024/1024), sum(PGA_MAX_MEM/1024/1024) 
+from  v$process 
+group by CON_ID order by  CON_ID;
+
+# Get  tablespace details from snapshots
+
+SELECT TO_CHAR (sp.begin_interval_time,'DD-MM-YYYY') days 
+, ts.tsname
+, max(round((tsu.tablespace_size* dt.block_size )/(1024*1024),2) ) cur_size_MB
+, max(round((tsu.tablespace_usedsize* dt.block_size )/(1024*1024),2)) usedsize_MB 
+FROM DBA_HIST_TBSPC_SPACE_USAGE tsu
+, DBA_HIST_TABLESPACE_STAT ts 
+, DBA_HIST_SNAPSHOT sp
+, DBA_TABLESPACES dt
+WHERE tsu.tablespace_id= ts.ts#
+AND tsu.snap_id = sp.snap_id
+AND ts.tsname = dt.tablespace_name
+AND ts.tsname IN ('PSAPPM8740')
+GROUP BY TO_CHAR (sp.begin_interval_time,'DD-MM-YYYY'), ts.tsname 
+ORDER BY ts.tsname, days;
+
+
+#-- get oracle session details
+
+select OSUSER,PROGRAM,MACHINE,SERVER,USERNAME,SID,SERIAL#,SQL_ID from V$session where machine ='phydnclw1001';
+select OSUSER,PROGRAM,MACHINE,SERVER,USERNAME,SID,SERIAL#,SQL_ID from V$session where status='ACTIVE' and TYPE !='BACKGROUND';
+
+
+#-- Get trace file info
+
+select value from v$diag_info where NAME='Diag Trace';
+
+# -- Rman uncatalog piece from control file
+
+Change backuppiece TAG='P329_BACKUP' Uncatalog ;
+Change backuppiece TAG='BEYHNKWX' Uncatalog ;
+
+#-- Provide system pid and get session details
+
+col sid format 999999
+col username format a20
+col osuser format a15
+select a.sid, a.serial#,a.sql_id,a.username, a.osuser, b.spid,a.status,a.program,a.machine
+from v$session a, v$process b
+where a.paddr= b.addr
+and b.spid='&spid'
+order by b.spid;
+
+
+
+# --Archive generation 
+select trunc(COMPLETION_TIME,'DD') Day, thread#, round(sum(BLOCKS*BLOCK_SIZE)/1073741824) GB,count(*) Archives_Generated from v$archived_log group by trunc(COMPLETION_TIME,'DD'),thread# order by 1; 
+
+
+# -- DB start time in well format time stamp
+
+SELECT instance_name,to_char(TIMESTAMP,'DD-MON-YYYY HH24:MI:SS') "DB Startup Time" FROM sys.v_$instance;
+
+# -- Table data with time stamp required for flash back purpose.
+
+SELECT count(1) FROM SAPPM8.ZZSM_REL_BP_CAT AS OF TIMESTAMP TO_TIMESTAMP('2019-07-26 14:00:59', 'YYYY-MM-DD HH24:MI:SS');
+SELECT * FROM SAPPM8.ZZSM_REL_BP_CAT AS OF TIMESTAMP TO_TIMESTAMP('2019-07-26 14:00:59', 'YYYY-MM-DD HH24:MI:SS');
+
+set line 200
+col INSTANCE_NAME for a10
+col HOST_NAME for a15
+col startup_time format a20
+col "DB Start Time" for a25
+select inst_id,upper(instance_name)instance_name,host_name,to_char(startup_time,'DD-MON-YYYY HH24:MI:SS') "DB Start Time",STATUS from gv$instance;
+
+
+#-- Get last analyszed tables
+select to_char(last_analyzed,'DD-MON-YYYY HH24:MI') from dba_tables order by last_analyzed ; 
+Select to_char(sysdate,'Mon dd yyyy hh24:mi:ss') from dual;
+
+
+# -- RMan Catalog DB connection string 
+
+rman target / catalog RCATP/R3c0v3ry@VIP000000015:1521/RCATP
+
+---------
+Instance Status in Cluster:
+----------
+
+srvctl status database -d WIPTFP
+srvctl status database -d ODSTFP
+
+SELECT to_char(startup_time,'DD-MON-YYYY HH24:MI:SS') "DB Startup Time",INSTANCE_NAME,HOST_NAME,STATUS from gv$instance;
+
+Diskgroup space details:-
+=================
+
+select name,total_mb,free_mb,(100* (free_mb/total_mb)) "% Free at DiskGroup" from v$asm_diskgroup;
+
+/sbin/blkid | grep oracleasm | grep RECO
+
+For Checking Tablespace Space details:-
+============================
+----------------------------------------------
+column "Used MB"    format 99,999,999
+column "Free MB"    format 99,999,999
+column "Total MB"   format 99,999,999
+col "Tablespace" for a30
+select fs.tablespace_name "Tablespace",(df.totalspace - fs.freespace) "Used MB",
+fs.freespace "Free MB",
+df.totalspace "Total MB",
+round(100 * (fs.freespace / df.totalspace)) "Pct. Free"
+from (select tablespace_name,round(sum(bytes) / 1048576) TotalSpace from dba_data_files group by
+tablespace_name) df,
+(select tablespace_name,round(sum(bytes) / 1048576) FreeSpace from dba_free_space
+group by tablespace_name
+) fs where df.tablespace_name = fs.tablespace_name --and df.tablespace_name='COST_SUM_FACT_DATA'
+ order by "Pct. Free"
+/
+
+CREATE UNDO TABLESPACE undo2 datafile '/u01/app/oracle/oradata/RTS_NEW/undo2_df1.dbf' size 200m autoextend on maxsize 30G;
+
+
+06:19:46 2019
+
+set pagesize 999;
+set linesize 180;
+col  TABLESPACE_NAME format a20
+col  FILE_NAME format a48
+col  AUTOEXTENSIBLE format a10
+col  MAXBYTES format 999999999.99
+select TABLESPACE_NAME, FILE_ID,FILE_NAME,AUTOEXTENSIBLE,MAXBYTES/1024/1024/1024 from dba_data_files
+where TABLESPACE_NAME like 'PSAPBTABD' order by FILE_ID  ;
+
+alter tablespace PSAPBTABD add datafile '/oracle/SB2/sapdata1/PSAPBTABD_0101_1.dbf' size 31G;
+
+
+
+select tsu.tablespace_name
+    , ceil(tsu.used_mb) "Total size MB"
+, ceil(tsf.free_mb) "Free Size MB"
+, 100 - floor(tsf.free_mb/tsu.used_mb*100) "% Used"
+from (select tablespace_name, sum(bytes)/1024/1024 used_mb
+       from dba_data_files group by tablespace_name) tsu
+    , (select tablespace_name, sum(bytes)/1024/1024 free_mb
+    from dba_free_space group by tablespace_name) tsf
+    where tsu.tablespace_name = tsf.tablespace_name (+)
+    and 100 - floor(tsf.free_mb/tsu.used_mb*100)  and tsu.tablespace_name ='PSAPUNDO'
+   order by 3;
+   
+
+
+
+
+cp -pr /home/oraqxz/script/qxz_backup.out /backup/QXZ/`date '+%d%m%Y'`/
+
+
+
+--#alter tablespace PSAPBIW add datafile 'E:\ORACLE\SBT\SAPDATA1\BIW_58\BIW_1.DATA60' size 30G autoextend on;
+
+E:\ORACLE\SSM\SAPDATA4\SR3_9\SR3.DATA9
+
+alter database datafile 'E:\ORACLE\SSM\SAPDATA4\SR3_9\SR3.DATA9' resize 31G;
+
+
+
+
+SELECT v.file#, t.file_name,t.BYTES/1024/1024, v.status FROM dba_temp_files t, v$tempfile v WHERE t.file_id = v.file#;
+
+
+
+select  file_name, tablespace_name, status
+,bytes   /1000000 as MB
+,maxbytes/1000000  as MB_max
+from dba_data_files where tablespace_name='TEMP';
+
+
+select TABLESPACE_NAME, BYTES_USED/1024/1024, BYTES_FREE/1024/1024 from V$TEMP_SPACE_HEADER;
+
+select tablespace_name, 
+'free space' owner, /*"owner" of free space */ 
+' ' object,         /*blank object name */ 
+file_id, /*file id for the extent header*/ 
+block_id, /*block id for the extent header*/ 
+CEIL(blocks*4/1024) MBytes /*length of the extent, in Mega Bytes*/ 
+from dba_free_space 
+where tablespace_name like '%PSAPTEMP%' 
+union 
+select tablespace_name, 
+substr(owner, 1, 20), /*owner name (first 20 chars)*/ 
+substr(segment_name, 1, 32), /*segment name */ 
+file_id, /*file id for extent header */ 
+block_id, /*block id for extent header */ 
+CEIL(blocks*4/1024) MBytes /*length of the extent, in Mega Bytes*/ 
+from dba_extents 
+where tablespace_name like '%PSAPTEMP%' 
+order by 1, 4, 5 
+/
+
+
+select *
+from database_properties
+where property_name like 'DEFAULT%TABLESPACE';
+
+select USERNAME, DEFAULT_TABLESPACE, TEMPORARY_TABLESPACE from DBA_USERS;
+
+set pages 999
+select 'alter user '||username||' default tablespace PSAPPM8USR;' from dba_users where default_tablespace not in ('SYSTEM');
+
+col owner form a30
+col SEGMENT_NAME form a30
+set pagesize 30
+select OWNER,count(1) from dba_segments where SEGMENT_TYPE='INDEX' group by OWNER order by OWNER;
+
+
+col SEGMENT_NAME form a30
+set pagesize 30
+select OWNER,sum(BYTES/1024/1024) SIZE_MB from dba_segments group by  OWNER order by OWNER;
+
+
+set pagesize 999;
+set linesize 180;
+col  TABLESPACE_NAME format a20
+col  FILE_NAME format a48
+col  AUTOEXTENSIBLE format a10
+col  MAXBYTES format 999999999.99
+select TABLESPACE_NAME, FILE_ID,FILE_NAME,AUTOEXTENSIBLE,MAXBYTES/1024/1024/1024 from dba_Data_files
+where TABLESPACE_NAME like 'PSAPBTABD' order by FILE_ID  ; 
+
+alter tablespace SYSTEM add datafile '/oracle/PM8/sapdata1/SYSTEM_02.dbf' size 10G autoextend on;
+
+
+set lines 300
+col FILE_NAME format a45 
+select FILE_ID,FILE_NAME,TABLESPACE_NAME,ONLINE_STATUS,STATUS from DBA_DATA_FILES ;
+
+
+------------------------------------------------------
+set linesize 1000 pagesize 0 feedback off trimspool on
+with
+ hwm as (
+  -- get highest block id from each datafiles ( from x$ktfbue as we don't need all joins from dba_extents )
+  select /*+ materialize */ ktfbuesegtsn ts#,ktfbuefno relative_fno,max(ktfbuebno+ktfbueblks-1) hwm_blocks
+  from sys.x$ktfbue group by ktfbuefno,ktfbuesegtsn
+ ),
+ hwmts as (
+  -- join ts# with tablespace_name
+  select name tablespace_name,relative_fno,hwm_blocks
+  from hwm join v$tablespace using(ts#)
+ ),
+ hwmdf as (
+  -- join with datafiles, put 5M minimum for datafiles with no extents
+  select file_name,nvl(hwm_blocks*(bytes/blocks),5*1024*1024) hwm_bytes,bytes,autoextensible,maxbytes
+  from hwmts right join dba_data_files using(tablespace_name,relative_fno)
+ )
+select
+ case when autoextensible='YES' and maxbytes>=bytes
+ then -- we generate resize statements only if autoextensible can grow back to current size
+  '/* reclaim '||to_char(ceil((bytes-hwm_bytes)/1024/1024),999999)
+   ||'M from '||to_char(ceil(bytes/1024/1024),999999)||'M */ '
+   ||'alter database datafile '''||file_name||''' resize '||ceil(hwm_bytes/1024/1024)||'M;'
+ else -- generate only a comment when autoextensible is off
+  '/* reclaim '||to_char(ceil((bytes-hwm_bytes)/1024/1024),999999)
+   ||'M from '||to_char(ceil(bytes/1024/1024),999999)
+   ||'M after setting autoextensible maxsize higher than current size for file '
+   || file_name||' */'
+ end SQL
+from hwmdf
+where
+ bytes-hwm_bytes>1024*1024 -- resize only if at least 1MB can be reclaimed
+order by bytes-hwm_bytes desc
+/
+
+--------------------------------------------------------
+
+
+--------------------------
+Add space to table space:
+-------------------------
+
+set pagesize 999;
+set linesize 180;
+col  TABLESPACE_NAME format a20
+col  FILE_NAME format a48
+col  AUTOEXTENSIBLE format a10
+col  MAXBYTES format 999999999.99
+select TABLESPACE_NAME, FILE_ID,FILE_NAME,AUTOEXTENSIBLE,MAXBYTES/1024/1024/1024 from dba_Data_files
+where TABLESPACE_NAME like 'USERS' order by FILE_ID  ; 
+
+--#alter tablespace PSAPBIW add datafile 'E:\ORACLE\SBT\SAPDATA1\BIW_58\BIW_1.DATA60' size 30G autoextend on;
+
+set pagesize 999;
+set linesize 180;
+select
+   fs.tablespace_name                          "Tablespace",
+   (df.totalspace - fs.freespace)              "Used MB",
+   fs.freespace                                "Free MB",
+   df.totalspace                               "Total MB",
+   round(100 * (fs.freespace / df.totalspace)) "Pct. Free"
+from
+   (select
+      tablespace_name,
+      round(sum(bytes) / 1048576) TotalSpace
+   from
+      dba_data_files
+   group by
+      tablespace_name
+   ) df,
+   (select
+      tablespace_name,
+      round(sum(bytes) / 1048576) FreeSpace
+   from
+      dba_free_space
+   group by
+      tablespace_name
+   ) fs
+where
+   df.tablespace_name = fs.tablespace_name
+ORDER BY
+   round(100 * (fs.freespace / df.totalspace)) ASC;
+
+   
+   ----------------------------------------------
+
+
+Space details for particular tablespace:-
+=============================
+
+col FILE_NAME format a60;
+set lines 1000;
+set pages 1000;
+select TABLESPACE_NAME,sum(bytes/1024/1024/1024) from dba_data_files where tablespace_name='PSAPTEMP'*/ group by TABLESPACE_NAME;
+
+alter database datafile ' E:\ORACLE\SMP\SAPDATA1\SYSAUX_1\SYSAUX2.DATA2' resize 7G;
+
+alter tablespace PSAPTEMP add tempfile 'F:\oracle\SRQ\SAPDATA_2\TEMP_1\TEMP.DATA1'  size 20G autoextend on;
+
+CREATE TEMPORARY TABLESPACE PSAPTEMP_1 TEMPFILE 'F:\oracle\SRQ\SAPDATA_2\TEMP_1\TEMP.DATA2' SIZE 20G autoextend on;
+ALTER DATABASE DEFAULT TEMPORARY TABLESPACE PSAPTEMP_1;
+
+PSAPSR3702X
+
+alter tablespace
+   undotbs1
+add datafile
+   'C:\APP\ORCL\ORADATA\ORCL\UNDOTBS01A.DBF'
+size 500m
+autoextend on
+
+
+BLOCK SESSIONS
+--------------------
+set lines 200;
+select 
+   blocking_session, 
+   sid, 
+   serial#, 
+   wait_class,
+   seconds_in_wait
+from 
+   gv$session
+where 
+   blocking_session is not NULL
+order by 
+   blocking_session;
+
+query_details:
+--------------
+
+set pages 50000 lines 32767
+col target format a25
+col opname format a40
+select sid
+      ,opname
+      ,target
+      ,round(sofar/totalwork*100,2)   as percent_done
+      ,start_time
+      ,last_update_time
+      ,time_remaining
+from 
+       v$session_longops
+/
+
+
+STALE SESSIONS
+--------------
+
+ALTER SYSTEM SET LOG_ARCHIVE_DEST_1='LOCATION=/BO_NONPRD_BACKUP/T328/oraarch/T328arch' scope=both;
+ALTER SYSTEM SET LOG_ARCHIVE_DEST_1='LOCATION=/BO_NONPRD_BACKUP/T329/oraarch/T329arch' scope=both;
+
+alter database enable block change tracking using file '/BO_NONPRD_BACKUP/T329/RMAN/BCTFILE/BCTFILE.log';
+alter database enable block change tracking using file '/BO_NONPRD_BACKUP/T328/oraarch/BCTFILE/BCTFILE.log';
+CTP,
+
+RMAN_BACKUP:
+============
+46799451384
+
+uN6%U9jy
+uN6%U9jy
+
+set lines 200
+col input_type Format a15
+col DB_NAME for a10
+col status Format a10
+col start_time Format a20
+col end_time Format a20
+col INPUT_BYTES_DISPLAY Format a20
+col output_bytes_display Format  a20
+col TIME_TAKEN_DISPLAY format a15
+select (select name from V$DATABASE)DB_NAME,session_key,
+       input_type,
+       status,
+       to_char(start_time,'yyyy-mm-dd hh24:mi') start_time,
+       to_char(end_time,'yyyy-mm-dd hh24:mi')   end_time,INPUT_BYTES_DISPLAY,
+output_bytes_display,
+       time_taken_display
+from v$rman_backup_job_details where start_time >= sysdate-2
+order by start_time desc;
+
+
+SQL> col filename for a25 word_wrapped
+select type, status, filename, buffer_size, buffer_count
+from v$backup_async_io
+where type <> 'AGGREGATE'
+and status = 'IN PROGRESS';
+  
+  
+1 50GB
+2 100GB
+3 150GB
+4 200GB
+
+7p0m5App2018@@@
+
+rahul@oncloud.gq
+nitin@oncloud.gq Welcome@1234
+
+SQL TXT 
+===============
+
+select sql_fulltext,LAST_ACTIVE_TIME from
+(select * from v$sql where parsing_schema_name like 'GRE' order by first_load_time desc);
+
+
+
+
+
+RMAN full backup:
+-------------
+backup device type disk tag 'BACKUP_ODSTFA_31082016' database;
+ 
+backup device type disk tag 'BACKUP_WIPTFA_31082016' database; 
+
+BACKUP AS COMPRESSED BACKUPSET DATABASE PLUS ARCHIVELOG;
+
+RMAN FULL OFFLINE:
+-----------------
+
+1.start db in mount
+
+2.
+backup full database tag 'BACKUP_ODSLFA_18112016';
+backup full database tag 'BACKUP_WIPLFA_18112016';
+backup full database tag 'BACKUP_MA4_18112016';
+
+
+backup full database format '/u02/oracle/mybackup/%U' tag 'FULL_OFFLINE_16SEP17'
+
+========================
+
+#Trace sql time
+---------------
+
+set lines 200
+col OPNAME for a25
+
+Select
+a.sid,
+a.serial#,
+b.status,
+a.opname,
+to_char(a.START_TIME,' dd-Mon-YYYY HH24:mi:ss') START_TIME,
+to_char(a.LAST_UPDATE_TIME,' dd-Mon-YYYY HH24:mi:ss') LAST_UPDATE_TIME,
+a.time_remaining as "Time Remaining Sec" ,
+a.time_remaining/60 as "Time Remaining Min",
+a.time_remaining/60/60 as "Time Remaining HR"
+From v$session_longops a, v$session b
+where a.sid = b.sid
+And time_remaining > 0;
+
+
+Query_time:
+
+select sesion.sid,
+sesion.SERIAL#,
+       sesion.username,
+       optimizer_mode,
+	   PROGRAM,
+       cpu_time,
+       elapsed_time,
+	   EVENT
+  from v$sqlarea sqlarea, v$session sesion
+ where sesion.sql_hash_value = sqlarea.hash_value
+   and sesion.sql_address    = sqlarea.address
+   and sesion.username is not null 
+   
+   
+
+
+
+#Gather stats:
+---------------
+
+begin
+  dbms_stats.gather_schema_stats(
+      ownname          => 'SAPSR3',
+      estimate_percent => dbms_stats.auto_sample_size,
+      method_opt       => 'for all columns size auto',
+      cascade          => true, 
+      degree           => 7
+   );
+end;
+
+
+locks:
+-----
+
+set line 120
+column object_name  format a32
+column OS_USER_NAME format a12
+column orauser      format a12
+column sql_text     format a32
+column serial#      format 999999
+column sid          format 99999
+   SELECT OS_USER_NAME, ORACLE_USERNAME AS orauser, s.sid, o.object_name,
+   o.object_type, s.serial#, a.sql_text
+   FROM v$locked_object l, dba_objects o, v$session s, v$sqlarea a
+   WHERE l.object_id = o.object_id
+   AND   s.SQL_ADDRESS    = a.address
+   AND l.SESSION_ID = s.sid;
+   SELECT 'ALTER SYSTEM KILL SESSION '''||TO_CHAR(s.sid)||','||TO_CHAR(s.serial#)||''';' 
+   AS  "Statement to kill"
+   FROM v$locked_object l, dba_objects o, v$session s
+   WHERE l.object_id = o.object_id and s.status='INACTIVE'
+   AND l.SESSION_ID = s.sid;
+   
+ SELECT s1.username || '@' || s1.machine
+    || ' ( SID=' || s1.sid || ' )  is blocking '
+    || s2.username || '@' || s2.machine || ' ( SID=' || s2.sid || ' ) ' AS blocking_status,s1.SERIAL#,s1.WAIT_CLASS,s1.SECONDS_IN_WAIT
+    FROM v$lock l1, v$session s1, v$lock l2, v$session s2
+    WHERE s1.sid=l1.sid AND s2.sid=l2.sid
+    AND l1.BLOCK=1 AND l2.request > 0
+    AND l1.id1 = l2.id1
+    AND l2.id2 = l2.id2 ; 
+	
+SELECT a.username,a.SID,a.serial#,c.sql_text,a.program,a.status,spid,to_char(a.logon_time,'DD-MM-YYYY HH24:MI'),a.LAST_CALL_ET/3600 
+FROM v$session a,v$process b,v$sqlarea c  where a.status='ACTIVE' and a.last_call_et>1500 and not (a.username = 'SYS') and  a.paddr=b.addr and a.sql_hash_value=c.hash_value; 
+   
+ALTER SYSTEM KILL SESSION '61,62906';
+ALTER SYSTEM KILL SESSION '583,26370' immediate;
+ALTER SYSTEM KILL SESSION  '493,141'  immediate;
+  
+alter system kill session '733,30499' immediate; 
+set linesize 130;
+column object format a20;
+column terminal format a12;
+column locker format a12;
+column wait format a12;
+column type format a15;
+column lockmode format a14;
+select session_id "sid",SERIAL#  "Serial",
+substr(object_name,1,20) "Object",
+  substr(os_user_name,1,10) "Terminal",
+  substr(oracle_username,1,10) "Locker",
+  nvl(lockwait,'active') "Wait",
+  decode(locked_mode,
+    2, 'row share',
+    3, 'row exclusive',
+    4, 'share',
+    5, 'share row exclusive',
+    6, 'exclusive',  'unknown') "Lockmode",
+  OBJECT_TYPE "Type"
+FROM
+  SYS.V_$LOCKED_OBJECT A,
+  SYS.ALL_OBJECTS B,
+  SYS.V_$SESSION c
+WHERE
+  A.OBJECT_ID = B.OBJECT_ID AND
+  C.SID = A.SESSION_ID
+ORDER BY 1 ASC, 5 Desc
+/ 
+
+
+
+------------------------
+
+DB SIZE CALCULATE:
+------------------
+
+	col "Database Size" format a20 
+	col "Free space" format a20 
+	select ROUND(sum(used.bytes) / 1024 / 1024 / 1024 ) || ' GB' "Database Size" 
+	, ROUND(free.p / 1024 / 1024 /1024) || ' GB' "Free space" 
+	from (select bytes from v$datafile 
+		  union all 
+		  select bytes from v$tempfile 
+		  union all 
+		  select bytes from v$log) used 
+	, (select sum(bytes) as p from dba_free_space) free
+	group by free.p 
+	/  
+
+select
+"Reserved_Space(GB)", "Reserved_Space(GB)" - "Free_Space(GB)" "Used_Space(GB)","Free_Space(GB)"
+from(
+select 
+(select sum(bytes/(1014*1024*1024)) from dba_data_files) "Reserved_Space(GB)",
+(select sum(bytes/(1024*1024*1024)) from dba_free_space) "Free_Space(GB)"
+from dual);
+
+
+select file_type, space_used*percent_space_used/100/1024/1024 used,
+space_reclaimable*percent_space_reclaimable/100/1024/1024 reclaimable, frau.number_of_files
+from v$recovery_file_dest rfd, v$flash_recovery_area_usage frau;
+
+
+col startup_time format a20
+select inst_id,upper(instance_name)instance_name,host_name,to_char(startup_time,'DD-MON-YYYY HH24:MI:SS') "DB Startup Time",STATUS from gv$instance;
+
+
+
+col "Database Size" format a20 
+col "Free space" format a20 
+select round(sum(used.bytes) / 1024 / 1024 / 1024 ) || ' GB' "Database Size" 
+, round(free.p / 1024 / 1024 /1024) || ' GB' "Free space" 
+from (select bytes from v$datafile 
+      union all 
+      select bytes from v$tempfile 
+      union all 
+      select bytes from v$log) used 
+, (select sum(bytes) as p from dba_free_space) free 
+group by free.p 
+/ 
+
+
+----------------
+RMAN JOB STATUS:
+----------------
+col hrs format 999.99
+col STATUS format a9
+select SESSION_KEY, INPUT_TYPE, STATUS,
+to_char(START_TIME,'mm/dd/yy hh24:mi') start_time,
+to_char(END_TIME,'mm/dd/yy hh24:mi') end_time,
+elapsed_seconds/3600 hrs
+from V$RMAN_BACKUP_JOB_DETAILS
+order by start_time,END_TIME; 
+
+
+to_char()
+select to_char(LOGON_TIME,'DD/MM/YY hh24:mi') from V$session where sql_id='2fugd3k0xvupd';
+--------------------------
+HOw much so far completed:
+--------------------------
+
+SELECT SID, SERIAL#, opname, SOFAR, TOTALWORK, 
+ROUND (SOFAR/TOTALWORK*100, 2) "% COMPLETE"
+FROM GV$SESSION_LONGOPS
+WHERE OPNAME NOT LIKE '%aggregate%'
+AND TOTALWORK! = 0 AND SOFAR <> TOTALWORK;
+
+set line 300
+ SELECT SID, SERIAL#, opname, SOFAR, TOTALWORK,
+ROUND(SOFAR/TOTALWORK*100,2) COMPLETE
+FROM   V$SESSION_LONGOPS
+WHERE
+TOTALWORK != 0
+AND    SOFAR != TOTALWORK
+order by 1;
+
+
+
+
+ALTER DATABASE ENABLE BLOCK CHANGE TRACKING  USING FILE '/backup/SM8/RMAN/BCTFILE.log';
+
+col OPNAME for a30
+select OPNAME,SOFAR/TOTALWORK*100 PCT, trunc(TIME_REMAINING/60) MIN_RESTANTES,
+trunc(ELAPSED_SECONDS/60) MIN_ATEAGORA
+from v$session_longops where TOTALWORK>0 
+and SOFAR/TOTALWORK*100 <100;
+
+
+du -sh lvl_0
+du -m lvl_0
+
+-----------------
+#My query:
+----------------
+set lines 400
+col event format a30 
+col OPNAME format a40
+select sl.SID,sl.SERIAL#,S.EVENT,SL.OPNAME,
+round(SOFAR/TOTALWORK*100,2) "% COMPLETE",to_char(SL.START_TIME,'dd/mon/yy hh24:mi') start_time,
+round(SL.TIME_REMAINING/60/60,2) as HRs_remaining FROM 
+GV$SESSION_LONGOPS SL,GV$SESSION S WHERE
+SL.SID=S.SID AND
+SL.SERIAL#=S.SERIAL#
+--AND SL.OPNAME like '%RMAN%' AND SL.OPNAME NOT LIKE '%aggregate%'
+AND SL.SOFAR <> TOTALWORK
+AND SL.TOTALWORK! = 0;
+
+
+ High CPU:
+========
+
+GET PID:
+-------
+col sid format 999999
+col username format a20
+col osuser format a15
+select a.sid, a.serial#,a.username, a.osuser, b.spid
+from v$session a, v$process b
+where a.paddr= b.addr
+and a.sid='&sid'
+order by a.sid;
+
+GET SID: 64871
+--------
+col sid format 999999
+col username format a20
+col osuser format a15
+select a.sid, a.serial#,a.sql_id,a.username, a.osuser, b.spid,a.status,a.program,a.machine
+from v$session a, v$process b
+where a.paddr= b.addr
+and b.spid='106599'
+order by b.spid;
+
+find /oracle/PXZ/saptrace/diag/rdbms/pxz/PXZ/trace/ -mtime +10 -exec rm -rf {} \;
+
+
+alter system set local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST=146.106.16.71)(PORT=1521))' sid=MA22 scope=both;
+
+Alter SGA
+---------
+alter system set sga_max_size=6G scope=spfile;
+alter system set sga_target=6G scope=spfile;
+alter system set shared_pool_size=2G scope=spfile;
+
+
+ list backup of database completed between "to_date('01/09/2016','DD/MM/YYYY')" and "to_date('20/09/2016','DD/MM/YYYY')";
+
+RMAN
+----
+---------------
+this script has taken 5TB online backup in 1.5 Hrs
+---------------------
+
+export ORACLE_SID=NEC1
+export ORACLE_HOME=/oracle/NEC/112
+export PATH=$PATH:$ORACLE_HOME/bin
+export NLS_DATE_FORMAT="DD-MON-YYYY:HH24:MI:SS"
+export DATE=`date '+%d%m%y_%H%M%S'`
+export LOGFILE=/oracle/NEC/rman_$DATE.log
+$ORACLE_HOME/bin/rman log=$LOGFILE <<eof
+connect target /;
+run
+{
+allocate channel oem_backup_disk1 type disk ;
+allocate channel oem_backup_disk2 type disk ;
+allocate channel oem_backup_disk3 type disk ;
+allocate channel oem_backup_disk4 type disk ;
+allocate channel oem_backup_disk5 type disk ;
+allocate channel oem_backup_disk6 type disk ;
+allocate channel oem_backup_disk7 type disk ;
+allocate channel oem_backup_disk8 type disk ;
+allocate channel oem_backup_disk9 type disk ;
+allocate channel oem_backup_disk10 type disk ;
+backup as BACKUPSET tag 'OFFLINE_SRQ_14NOV' database format='L:\oracle\Rman_offline\dbfile_%U%_%t';
+backup full database format 'L:\oracle\Rman_offline\dbfile_%U%_%t' tag 'OFFLINE_SRQ_14NOV'
+release channel oem_backup_disk1;
+release channel oem_backup_disk2;
+release channel oem_backup_disk3;
+release channel oem_backup_disk4;
+release channel oem_backup_disk5;
+release channel oem_backup_disk6;
+release channel oem_backup_disk7;
+release channel oem_backup_disk8;
+release channel oem_backup_disk9;
+release channel oem_backup_disk10;
+}
+eof
+
+
+ALTER DATABASE DEFAULT EDITION =ORA$BASE; 
+
+
+
+
+set lines 300
+col CURRENT_SCN format 999999999999999
+col DB_UNIQUE_NAME format a20
+select DB_UNIQUE_NAME,DATABASE_ROLE,OPEN_MODE,PROTECTION_MODE,CURRENT_SCN from GV$DATABASE;
+
+Open cursor:
+============
+set lines 150
+col MAX_OPEN_CUR format a20 
+select max(a.value) as highest_open_cur, p.value as max_open_cur
+from v$sesstat a, v$statname b, v$parameter p
+where a.statistic# = b.statistic#
+and b.name = 'opened cursors current'
+and p.name= 'open_cursors'
+group by p.value; 
+
+
+Standby verification Redo shipping:
+=====================
+
+!ps -ef|grep mrp
+
+select LOG_ARCHIVED-LOG_APPLIED "LOG_GAP" from (SELECT MAX(SEQUENCE#) LOG_ARCHIVED FROM V$ARCHIVED_LOG WHERE DEST_ID=1 AND ARCHIVED='YES'),
+(SELECT MAX(SEQUENCE#) LOG_APPLIED FROM V$ARCHIVED_LOG WHERE DEST_ID=2 AND APPLIED='YES');
+
+
+SELECT ARCH.THREAD# "Thread", ARCH.SEQUENCE# "Last Sequence Received", APPL.SEQUENCE# "Last Sequence Applied", (ARCH.SEQUENCE# - APPL.SEQUENCE#) "Difference"
+FROM
+(SELECT THREAD# ,SEQUENCE# FROM V$ARCHIVED_LOG WHERE (THREAD#,FIRST_TIME ) IN (SELECT THREAD#,MAX(FIRST_TIME) FROM V$ARCHIVED_LOG GROUP BY THREAD#)) ARCH,
+(SELECT THREAD# ,SEQUENCE# FROM V$LOG_HISTORY WHERE (THREAD#,FIRST_TIME ) IN (SELECT THREAD#,MAX(FIRST_TIME) FROM V$LOG_HISTORY GROUP BY THREAD#)) APPL
+WHERE
+ARCH.THREAD# = APPL.THREAD#
+ORDER BY 1;
+
+
+select max(a.SEQUENCE#),a.THREAD# from V$ARCHIVED_LOG a, V$LOG_HISTORY b
+where a.THREAD#=b.THREAD# group by a.THREAD#;
+
+SELECT ARCHIVED_THREAD#, ARCHIVED_SEQ#, APPLIED_THREAD#, APPLIED_SEQ#
+FROM V$ARCHIVE_DEST_STATUS; 
+
+SELECT THREAD#, LOW_SEQUENCE#, HIGH_SEQUENCE# FROM V$ARCHIVE_GAP;
+
+select max(SEQUENCE#) "LAST_LOG_GENERATED" FROM V$ARCHIVED_LOG WHERE THREAD# =1 and ARCHIVED='YES';
+
+select max(SEQUENCE#) "LAST_LOG_APPLIED" FROM V$ARCHIVED_LOG WHERE THREAD# = 1 and APPLIED='YES';
+
+SELECT THREAD# "Thread",SEQUENCE# "Last Sequence Generated" FROM V$ARCHIVED_LOG WHERE (THREAD#,FIRST_TIME ) IN (SELECT THREAD#,MAX(FIRST_TIME) FROM 
+V$ARCHIVED_LOG GROUP BY THREAD#) ORDER BY 1;
+
+SELECT ARCH.THREAD# "Thread", ARCH.SEQUENCE# "Last Sequence Received", APPL.SEQUENCE# "Last Sequence Applied", (ARCH.SEQUENCE# - APPL.SEQUENCE#) "Difference"
+FROM
+(SELECT THREAD# ,SEQUENCE# FROM V$ARCHIVED_LOG WHERE (THREAD#,FIRST_TIME ) IN (SELECT THREAD#,MAX(FIRST_TIME) FROM V$ARCHIVED_LOG GROUP BY THREAD#)) ARCH,
+(SELECT THREAD# ,SEQUENCE# FROM V$LOG_HISTORY WHERE (THREAD#,FIRST_TIME ) IN (SELECT THREAD#,MAX(FIRST_TIME) FROM V$LOG_HISTORY GROUP BY THREAD#)) APPL
+WHERE
+ARCH.THREAD# = APPL.THREAD#
+ORDER BY ARCH.SEQUENCE#,APPL.SEQUENCE#;
+
+SELECT to_char(current_scn) FROM v$database; --STANDBY--
+SELECT to_char(current_scn) FROM v$database; --#Primary
+
+SELECT SCN_TO_TIMESTAMP(2683886) FROM dual;
+ 
+
+DGMGRL> show database verbose 'PRD_HTC'
+DGMGRL> EDIT DATABASE 'PRD' SET PROPERTY TransportDisconnectedThreshold='300';
+
+DGMGRL> show configuration
+DGMGRL> show database verbose 'PRD_HTC'
+DGMGRL> EDIT DATABASE 'PRD_HTC' SET PROPERTY TransportDisconnectedThreshold='30';
+
+rman target sys/sp0ren@PRD auxiliary sys/sp0ren@NEC
+
+SELECT current_scn FROM v$database;
+
+
+-----------------------------
+-----------------------------
+alter system set db_recovery_file_dest_size=350G scope=spfile sid='*';
+
+alter database recover managed standby database cancel;
+
+ALTER DATABASE RECOVER MANAGED STANDBY DATABASE USING CURRENT LOGFILE DISCONNECT;
+
+
+
+JDBC Connection details:
+------------------------
+jdbc:oracle:thin:@//ics106045239.ics-eu-1.asml.com:1521/WLD
+jdbc:oracle:thin:@//VIP000000159.ics-eu-1.asml.com:1521/ODSTFA
+jdbc:oracle:thin:@//VIP000000150.ics-eu-1.asml.com:1521/WIPLFA
+jdbc:oracle:thin:@//VIP000000150.ics-eu-1.asml.com:1521/ODSLFA
+
+jdbc:oracle:thin:@//nlsapdbbd301:1550/BD3
+ssh -N -L1550:nlsapdbbd301:1550 sys@BD3
+
+
+VIP000000169
+
+glassfish_own
+
+GLASSFISH_OWN
+
+
+select metadata.get_ddl('VIEW','SQLMVLI') from dual;
+
+
+
+Password and profile Reset:
+---------------
+
+select 'alter user "'||d.username||'" identified by values '''||u.password||''';' c
+from dba_users d, sys.user$ u
+where d.username ='A188107'
+and u.user# = d.user_id; 
+
+
+select USER#,NAME,PASSWORD FROM user$ where name='SAPSR3DB';
+select * from dba_profiles where profile='NH_ENDUSER' and  RESOURCE_NAME in ('PASSWORD_REUSE_TIME','PASSWORD_REUSE_MAX') ;
+
+ALTER PROFILE NH_ENDUSER LIMIT PASSWORD_REUSE_TIME 1;
+alter profile NH_ENDUSER limit PASSWORD_REUSE_TIME 360;
+alter profile NH_ENDUSER limit PASSWORD_REUSE_MAX UNLIMITED;
+
+set lines 200
+col username for a20
+select username,account_status,EXPIRY_DATE,PASSWORD_VERSIONS from dba_users; where username='SYSTEM';
+
+select username,account_status,EXPIRY_DATE from dba_users
+where account_status !='OPEN'
+and username in ('SYS','SYSTEM','SM_DBA_PM8') or username like '%SAP%';
+
+
+alter user A255393 IDENTIFIED BY VALUES 'DA223EC52D492AB0';
+
+alter user "GLASSFISH_OWN" identified by DBSNMP;
+
+ALTER PROFILE DEFAULT LIMIT PASSWORD_LIFE_TIME UNLIMITED;
+
+GRANT CREATE ANY EDITION, DROP ANY EDITION to SAPECC;
+alter user SAPECC enable editions;
+
+EXEC DBMS_UTILITY.compile_schema(schema => 'SAPR3');
+
+ALTER USER SYS ACCOUNT UNLOCK;
+
+set lines 200
+col USERNAME format a35
+col ACCOUNT_STATUS format a20
+col LOCK_DATE format a20
+col EXPIRY_DATE format a20
+col PROFILE format a20
+select USERNAME,ACCOUNT_STATUS,LOCK_DATE,EXPIRY_DATE,PROFILE from dba_users where ORACLE_MAINTAINED ='N' order by ACCOUNT_STATUS
+
+select USERNAME,ACCOUNT_STATUS,LOCK_DATE,EXPIRY_DATE,PROFILE from dba_users where ACCOUNT_STATUS like '%LOCKED%' and EXPIRY_DATE like '%SEP-19%' order by ACCOUNT_STATUS;
+
+select USERNAME,ACCOUNT_STATUS,LOCK_DATE,EXPIRY_DATE,PROFILE from dba_users where PASSWORD_VERSIONS ='10G ';
+
+
+SELECT 
+   name, 
+   ctime, 
+   ptime 
+FROM 
+   sys.user$ 
+WHERE 
+    name like '%SAP%';
+	
+
+set lines 200
+col USERNAME format a20
+col ACCOUNT_STATUS format a20
+col LOCK_DATE format a20
+col EXPIRY_DATE format a20
+col PROFILE format a20
+select USERNAME,ACCOUNT_STATUS,LOCK_DATE,EXPIRY_DATE,PROFILE,PASSWORD_VERSIONS from dba_users; where USERNAME ='SYSTEM' ; where username like '%SAPPM8%'
+
+create user "OPS$S7\SAPSERVICESRQ" identified externally;
+create user "OPS$S7\SRPADM" identified externally;
+
+
+select * from USER_ROLE_PRIVS where USERNAME like '%SAPECC%';
+select * from USER_TAB_PRIVS where Grantee like '%SAPECC%';
+select * from USER_SYS_PRIVS where USERNAME like '%SAPECC%';
+
+
+SELECT property_value
+FROM   database_properties
+WHERE  property_name like'%EDITION%';
+
+
+SELECT editions_enabled
+FROM   dba_users
+WHERE  username = 'SAPECC';
+
+1.	Take Full RMAN online backup of SRQ now (Around 7:30 PM IST)
+2.	Basis will stop the SRQ application on 10th August 1:30 AM IST and inform DB team.
+3.	DB team will start the restore activity and inform BASIS Team.
+4.	Regular interval  (4 to 6 hours) update on the DB restore activity.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+CREATE USER "OPS$s7\srdadm" IDENTIFIED EXTERNALLY;
+GRANT CREATE SESSION,SAPDBA TO "OPS$s7\srdadm";
+
+alter user "OPS$S7\SRDADM.S7" profile DEFAULT;
+alter user "OPS$S7\SRDADM" profile DEFAULT;
+
+GRANT CONNECT, RESOURCE,SAPDBA TO 'OPS$S7\srdadm.S7';
+SELECT GRANTED_ROLE FROM DBA_ROLE_PRIVS WHERE GRANTEE like 'OPS%';
+
+OPS$S7\SRDADM
+
+os_authent_prefix='OPS$S7\SRDADM.S7'
+os_authent_prefix=''
+
+
+SELECT OWNER, TABLE_OWNER, TABLE_NAME FROM DBA_SYNONYMS
+WHERE SYNONYM_NAME = 'SAPUSER';
+
+
+Gather Schema stats:
+-------------
+select 'EXEC DBMS_STATS.GATHER_TABLE_STATS(''SAPMEWIP'','''||object_name||''');'from user_objects where object_type='TABLE'; 
+
+select 
+    table_name, 
+    stale_stats, 
+    last_analyzed
+from 
+    dba_tab_statistics
+ where 
+    owner in ('SYS','SYSTEM')
+order by 
+    last_analyzed desc, table_name asc
+;
+
+select 
+    table_name, 
+    stale_stats, 
+    last_analyzed,owner
+from 
+    dba_tab_statistics
+ where 
+    table_name='D_DATE';
+
+dbms_stats.gather_table_stats('SAPMEWIP', 'BOCMS');
+EXEC DBMS_STATS.GATHER_TABLE_STATS('BOCMS','CMS_LOCKS7');
+
+
+
+db link:
+--------
+
+SET LINESIZE 150
+
+COLUMN db_link FORMAT A30
+COLUMN host FORMAT A30
+
+SELECT owner,
+       db_link,
+       username,
+       host
+FROM   dba_db_links
+ORDER BY owner, db_link;
+
+
+
+orapwd:
+-------
+orapwd file=orapwQXZ password=SysPass entries=5
+orapwd file=orapwP329 password=Pass2017! entries=5
+orapwd file=orapwDJP2 password=sp0ren entries=5
+
+orapwd file=pwdSRD.ora password=<Password> entries=5
+
+
+CREATE USER "OPS$S7\srdadm.S7" IDENTIFIED EXTERNALLY;
+GRANT CREATE SESSION TO "OPS$S7\srdadm.S7";
+
+pfile='E:\oracle\base\product\11.2.0\dbhome_1\database\pfile.ora'
+
+DB login time/start time:
+--------------------------
+
+select to_char(logon_time,'DD/MM/YYYY HH24:MI:SS') from v$session where sid=1;
+
+TO_CHAR(LOGON_TIME,
+-------------------
+24/11/2016 13:11:08
+
+col host_name for a15
+col instance_name for a10
+col start_time for a20
+select 
+host_name,instance_name,to_char(startup_time,'DD-MON-YYYY HH24:MI:SS') start_time from V$instance; 
+
+
+
+Agent start/stop
+-----------------
+
+export ORACLE_HOME=/oracle/app/oracle/product/Agentr4/core/12.1.0.4.0
+export PATH=$ORACLE_HOME/bin:$PATH
+emctl status agent
+emctl start agent
+emctl status agent
+
+ALTER SYSTEM KILL SESSION 'sid,serial#';
+
+
+alter database disable block change tracking;
+
+alter database enable block change tracking using file '/oracle/BWP_sapdata/11bctfbwp.ora'
+
+alter system set log_archive_dest_state_2=alternate;
+
+
+
+undo retension:
+---------------
+
+ALTER SYSTEM SET UNDO_RETENTION = 18000; #900
+ALTER TABLESPACE PSAPUNDO RETENTION GUARANTEE; #NOGUARANTEE
+SELECT tablespace_name, retention FROM dba_tablespaces;
+ALTER TABLESPACE undotbs1 RETENTION NOGUARANTEE;
+
+
+trace the block from the query
+----------------------------
+select empno,ename,
+dbms_rowid.rowid_relative_fno(rowid) fileno,
+dbms_rowid.rowid_block_number(rowid) blockno,
+from scott.emp where empno=7521;
+
+
+
+select inst_id,file#,block#,status,dirty from gv$bh
+where file#=6 and block#=197 and status!='free'
+ordey by 1,2,3;
+
+
+DELETE noprompt ARCHIVELOG ALL COMPLETED BEFORE "SYSDATE-3";
+
+
+
+
+SELECT ARCH.THREAD# “Thread”, ARCH.SEQUENCE# “Last Sequence Received”, APPL.SEQUENCE# “Last Sequence Applied”, (ARCH.SEQUENCE# – APPL.SEQUENCE#) “Difference” FROM (SELECT THREAD# ,SEQUENCE# FROM V$ARCHIVED_LOG WHERE (THREAD#,FIRST_TIME ) IN (SELECT THREAD#,MAX(FIRST_TIME) FROM V$ARCHIVED_LOG GROUP BY THREAD#)) ARCH, (SELECT THREAD# ,SEQUENCE# FROM V$LOG_HISTORY WHERE (THREAD#,FIRST_TIME ) IN (SELECT THREAD#,MAX(FIRST_TIME) FROM V$LOG_HISTORY GROUP BY THREAD#)) APPL WHERE ARCH.THREAD# = APPL.THREAD# ORDER BY 1;
+
+-------------------
+V$backup
+-------------------
+
+select distinct tablespace_name
+from dba_data_files a, v$backup b
+where a.file_id = b.file#
+and b.status = 'ACTIVE';
+
+alter tablespace users begin backup;
+alter tablespace users end backup;
+
+
+SQL> --Index details
+col owner form a30
+col SEGMENT_NAME form a30
+set pagesize 30
+select count(1), OWNER,SEGMENT_TYPE from dba_segments where SEGMENT_TYPE='INDEX'  group by OWNER,SEGMENT_TYPE
+order by OWNER;
+
+
+
+#######Tablespace query taking time#####
+
+SELECT count(*) from dba_recyclebin;
+
+select trunc(to_date(DROPTIME,'YYYY-MM-DD:HH24:MI:SS')), count(*) from dba_recyclebin group by trunc(to_date(DROPTIME,'YYYY-MM-DD:HH24:MI:SS'))
+order by 1
+/
+  
+purge dba_recyclebin;
+
+select count(*) from dba_segments where segment_name like 'BIN%';
+
+
+EXEC DBMS_STATS.GATHER_DICTIONARY_STATS(degree => 5);
+EXEC DBMS_STATS.GATHER_FIXED_OBJECTS_STATS(degree => 5);
+
+/NONPRD_BACKUP_PO -nfsvers=4,nosymlink,sync phydpapnfs05:/ORABackup_PO
+/NONPRD_BACKUP_PRO21 -nfsvers=4,nosymlink,sync phydpapnfs05:/ORABackup_Pro21_NonProd
+
+
+DWH_DWHAT.WORLD
+
+
+###########
+
+exec print_table('select * from dba_tab_statistics where  table_name='X$KTFBUE'');
+exec DBMS_STATS.GATHER_TABLE_STATS('SYS','X$KTFBUE');
+
+*._fix_control='23738304:OFF'
+23738304:ON
+
+select count(*) from X$KTFBUE;
+
+SELECT  tablespace_name, COUNT(bytes) undos, SUM(bytes) fundo FROM dba_undo_extents WHERE status IN ('EXPIRED', 'UNEXPIRED') GROUP BY tablespace_name;
+
+explain plan for	   
+SELECT  tablespace_name, COUNT(bytes) undos, SUM(bytes) fundo FROM dba_undo_extents WHERE status IN ('EXPIRED', 'UNEXPIRED') GROUP BY tablespace_name;
+
+SELECT * FROM table(DBMS_XPLAN.DISPLAY (FORMAT=>'ALL +OUTLINE'));
+
+
+col TOWNER form a10
+col IOWNER form a10
+col TNAME form a30
+col INAME form a30
+set pages 3000
+select
+T.OWNER TOWNER,
+T.SEGMENT_NAME TNAME,
+round(T.BYTES/1024/1024/1024) TSIZE_GB,
+I.OWNER IOWNER,
+I.SEGMENT_NAME INAME,
+round(I.BYTES/1024/1024/1024) ISIZE_GB,
+round((round(I.BYTES/1024/1024/1024)*100)/round(T.BYTES/1024/1024/1024))||'%' Percent
+from DBA_SEGMENTS T, DBA_SEGMENTS I, DBA_TABLES DT, DBA_INDEXES DI
+where T.SEGMENT_TYPE='TABLE' and T.SEGMENT_NAME=DT.TABLE_NAME and T.OWNER=DT.OWNER and
+I.SEGMENT_TYPE='INDEX' and I.SEGMENT_NAME=DI.INDEX_NAME and I.owner=DT.OWNER
+and T.bytes < I.bytes * (100/&percent) and DT.TABLE_NAME=DI.TABLE_NAME and DT.OWNER=DI.OWNER
+and DT.OWNER='SAPPM8' and DI.OWNER='SAPPM8' and T.BYTES/1024/1024 > 1024 order by T.Bytes
+/
+
+select * from v$session_fix_control where bugno=23738304;
+
+UNDO AND TEMP USAGES:
+
+select status, count(*) Num_Extents, sum(blocks) Num_Blocks, round((sum(bytes)/1024/1024),2) MB from dba_undo_extents group by status order by status; 
+
+##TEMP
+select a.tablespace_name tablespace,
+         d.TEMP_TOTAL_MB,
+         sum (a.used_blocks * d.block_size) / 1024 / 1024 TEMP_USED_MB,
+         d.TEMP_TOTAL_MB - sum (a.used_blocks * d.block_size) / 1024 / 1024 TEMP_FREE_MB
+from v$sort_segment a,
+        (
+          select   b.name, c.block_size, sum (c.bytes) / 1024 / 1024 TEMP_TOTAL_MB
+          from     v$tablespace b, v$tempfile c
+          where    b.ts#= c.ts#
+          group by b.name, c.block_size
+        ) d
+where    a.tablespace_name = d.name
+group by a.tablespace_name, d.TEMP_TOTAL_MB;
+
+
+
+
+COLUMN action_time FORMAT A12
+COLUMN action FORMAT A10
+COLUMN bundle_series FORMAT A4 
+COLUMN comments FORMAT A30
+COLUMN description FORMAT A40
+COLUMN namespace FORMAT A20
+COLUMN status FORMAT A10
+COLUMN version FORMAT A10
+SELECT (select name from V$database) DB_NAME, TO_CHAR(action_time, 'YYYY-MM-DD') AS action_time,
+ action,
+ status,
+ description,
+ version,
+ patch_id,
+ bundle_series
+ FROM   sys.dba_registry_sqlpatch where patch_id='29596584'
+ ORDER by action_time;
+ 
+ 
+------Upgrade 11.2.04
+http://www.br8dba.com/upgrade-oracle-database-from-11-2-0-4-to-12-2-0-1-using-dbua/
